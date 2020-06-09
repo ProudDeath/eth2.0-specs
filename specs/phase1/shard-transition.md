@@ -9,7 +9,10 @@
 **Table of Contents**  *generated with [DocToc](https://github.com/thlorenz/doctoc)*
 
 - [Introduction](#introduction)
+- [Containers](#containers)
+  - [`ShardTransitionDigest`](#shardtransitiondigest)
 - [Helper functions](#helper-functions)
+  - [Misc](#misc)
   - [Shard block verification functions](#shard-block-verification-functions)
 - [Shard state transition](#shard-state-transition)
 - [Fraud proofs](#fraud-proofs)
@@ -24,7 +27,31 @@
 
 This document describes the shard transition function and fraud proofs as part of Phase 1 of Ethereum 2.0.
 
+## Containers
+
+### `ShardTransitionDigest`
+
+```python
+class ShardTransitionDigest(Container):
+    shard_state_root: Root
+    beacon_parent_root: Root
+    shard_body_root: Root
+```
+
 ## Helper functions
+
+### Misc
+
+```python
+def compute_shard_transition_digest(shard_state: ShardState,
+                                    beacon_parent_root: Root,
+                                    shard_body_root: Root) -> Root:
+    return hash_tree_root(ShardTransitionDigest(
+        shard_state_root=hash_tree_root(shard_state),
+        beacon_parent_root=beacon_parent_root,
+        shard_body_root=shard_body_root,
+    ))
+```
 
 ### Shard block verification functions
 
@@ -73,17 +100,15 @@ def shard_state_transition(shard_state: ShardState,
     shard_state.slot = block.slot
     prev_gasprice = shard_state.gasprice
     shard_state.gasprice = compute_updated_gasprice(prev_gasprice, len(block.body))
-    if len(block.body) == 0:
-        latest_block_root = shard_state.latest_block_root
-    else:
-        latest_block_root = hash_tree_root(block)
-    shard_state.latest_block_root = latest_block_root
     if len(block.body) > 0:
+        shard_state.latest_block_root = hash_tree_root(block)
         shard_state.transition_digest = compute_shard_transition_digest(
             shard_state=shard_state,
             beacon_parent_root=block.beacon_parent_root,
             shard_body_root=hash_tree_root(block.body),
         )
+    else:
+        pass  # unchanged `shard_state.latest_block_root` and `shard_state.transition_digest`
 ```
 
 We have a pure function `get_post_shard_state` for describing the fraud proof verification and honest validator behavior.
