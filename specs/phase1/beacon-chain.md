@@ -30,6 +30,7 @@
   - [`ShardBlockHeader`](#shardblockheader)
   - [`ShardState`](#shardstate)
   - [`ShardTransition`](#shardtransition)
+  - [`ShardTransitionDigest`](#shardtransitiondigest)
   - [`CompactCommittee`](#compactcommittee)
   - [`AttestationCustodyBitWrapper`](#attestationcustodybitwrapper)
 - [Helper functions](#helper-functions)
@@ -42,6 +43,7 @@
     - [`compute_offset_slots`](#compute_offset_slots)
     - [`compute_updated_gasprice`](#compute_updated_gasprice)
     - [`compute_committee_source_epoch`](#compute_committee_source_epoch)
+    - [`compute_shard_transition_digest`](#compute_shard_transition_digest)
   - [Beacon state accessors](#beacon-state-accessors)
     - [`get_active_shard_count`](#get_active_shard_count)
     - [`get_online_validator_indices`](#get_online_validator_indices)
@@ -349,8 +351,8 @@ class ShardBlockHeader(Container):
 class ShardState(Container):
     slot: Slot
     gasprice: Gwei
-    transition_digest: Bytes32
     latest_block_root: Root
+    transition_digest: Root
 ```
 
 ### `ShardTransition`
@@ -367,6 +369,15 @@ class ShardTransition(Container):
     shard_states: List[ShardState, MAX_SHARD_BLOCKS_PER_ATTESTATION]
     # Proposer signature aggregate
     proposer_signature_aggregate: BLSSignature
+```
+
+### `ShardTransitionDigest`
+
+```python
+class ShardTransitionDigest(Container):
+    shard_state_root: Root
+    beacon_parent_root: Root
+    shard_body_root: Root
 ```
 
 ### `CompactCommittee`
@@ -485,6 +496,21 @@ def compute_committee_source_epoch(epoch: Epoch, period: uint64) -> Epoch:
     if source_epoch >= period:
         source_epoch -= period  # `period` epochs lookahead
     return source_epoch
+```
+
+#### `compute_shard_transition_digest`
+
+```python
+def compute_shard_transition_digest(shard_state: ShardState,
+                                    beacon_parent_root: Root,
+                                    shard_body_root: Root) -> Root:
+    empty_digest_shard_state = shard_state.copy()
+    empty_digest_shard_state.transition_digest = Root()
+    return hash_tree_root(ShardTransitionDigest(
+        shard_state_root=hash_tree_root(empty_digest_shard_state),
+        beacon_parent_root=beacon_parent_root,
+        shard_body_root=shard_body_root,
+    ))
 ```
 
 ### Beacon state accessors
@@ -879,14 +905,20 @@ def apply_shard_transition(state: BeaconState, shard: Shard, transition: ShardTr
         # Verify correct calculation of gas prices and slots
         assert shard_state.gasprice == compute_updated_gasprice(prev_gasprice, shard_block_length)
         assert shard_state.slot == offset_slot
+        beacon_parent_root = get_block_root_at_slot(state, offset_slot)
         # Collect the non-empty proposals result
         is_empty_proposal = shard_block_length == 0
         if not is_empty_proposal:
+            assert shard_state.transition_digest == compute_shard_transition_digest(
+                shard_state=shard_state,
+                beacon_parent_root=beacon_parent_root,
+                shard_body_root=transition.shard_data_roots[i],
+            )
             proposal_index = get_shard_proposer_index(state, offset_slot, shard)
             # Reconstruct shard headers
             header = ShardBlockHeader(
                 shard_parent_root=shard_parent_root,
-                beacon_parent_root=get_block_root_at_slot(state, offset_slot),
+                beacon_parent_root=beacon_parent_root,
                 slot=offset_slot,
                 shard=shard,
                 proposer_index=proposal_index,
